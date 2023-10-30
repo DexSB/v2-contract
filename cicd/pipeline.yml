@@ -1,0 +1,75 @@
+stages:
+  - pre_check
+  - build
+  - deploy
+
+variables:
+  CONTRACT_NAME: changeme
+  POLYGON_TESTNET_URL: https://polygon-mumbai.g.alchemy.com/v2/5YDmlpFonsBO99DjbYpvXrPm-D9Ywu2E
+  AMINOX_TESTNET_URL: https://aminoxtestnet.node.alphacarbon.network
+  AU4_DEPLOY_URL: https://evolution-k8s.oneops.net/staging/metasports/au4/standby/api/v1/contract/deployV2/deployContract
+  DOCKER_HUB_ACCOUNT: nextfortunetw
+  CICD_TOOL_VERSION: "1.2.0"
+
+validate_vars:
+  stage: pre_check
+  image: $DOCKER_HUB_ACCOUNT/cicd-tool:$CICD_TOOL_VERSION
+  variables:
+    GIT_STRATEGY: none
+  tags:
+    - evo_office
+    - vanguard
+  script:
+    - >-
+      validate_var () {
+        if [[ $1 == changeme ]]; then
+          echo "a required variable is not set"
+          exit 1
+        fi
+      }
+    - validate_var $CONTRACT_NAME
+    - validate_var $POLYGON_TESTNET_URL
+    - validate_var $AMINOX_TESTNET_URL
+    - validate_var $AU4_DEPLOY_URL
+
+build_contract:
+  stage: build
+  tags:
+    - evo_office
+    - vanguard
+  image: ghcr.io/foundry-rs/foundry:latest
+  script:
+    - forge build
+    - cat out/${CONTRACT_NAME}.sol/${CONTRACT_NAME}.json > ./${CONTRACT_NAME}.json
+  artifacts:
+    paths:
+      - ${CONTRACT_NAME}.json
+    expire_in: '10 min'
+
+deploy_to_testnet:
+  stage: deploy
+  tags:
+    - evo_office
+    - vanguard
+  image: $DOCKER_HUB_ACCOUNT/cicd-tool:$CICD_TOOL_VERSION
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      variables:
+        AU4_TOKEN: "d7bfec0a76440e09dc71"
+    - if: '$CI_COMMIT_BRANCH == "staging"'
+      variables:
+        AU4_TOKEN: "d7bfec0a76440e09dc71"
+    - if: '$CI_COMMIT_BRANCH == "production"'
+      variables:
+        AU4_TOKEN: "8e85df005719a596c2a"
+  script:
+    - cat ${CONTRACT_NAME}.json
+    - ABIS=$(jq '.abi | tostring' ${CONTRACT_NAME}.json)
+    - BYTECODE=$(jq '.bytecode.object | tostring' ${CONTRACT_NAME}.json)
+    - |
+      CURL_BODY='"{"abiString": $ABIS, "bytecodeString:" $BYTECODE,"chainName": "amino","memo": "deploy ${CONTRACT_NAME}","constrcutorParams": [],"isNeedProxy": false }"'
+    - |
+      echo $CURL_BODY
+#    - |
+#      curl -X POST https://evolution-k8s.oneops.net/${CI_COMMIT_BRANCH}/metasports/au4/primary/api/v1/contract/deployV2/deployContract \
+#      -H "Authorization: $AU4_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json" -d $BODY
